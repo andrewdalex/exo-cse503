@@ -83,6 +83,8 @@ module LoopIR {
          | Free( sym name, type type, mem mem )
          | Call( proc f, expr* args )
          | WindowStmt( sym name, expr rhs )
+         | Barrier()
+         | Fork( sym tid, expr thread_count, stmt* body )
          attributes( srcinfo srcinfo )
 
     loop_mode = Seq()
@@ -184,6 +186,8 @@ module UAST {
             | For     ( sym iter,  expr cond,   stmt* body )
             | Alloc   ( sym name, type type, mem? mem )
             | Call    ( loopir_proc f, expr* args )
+            | Barrier ()
+            | Fork( sym tid, expr thread_count, stmt* body )
             attributes( srcinfo srcinfo )
 
     expr    = Read    ( sym name, expr* idx )
@@ -195,6 +199,7 @@ module UAST {
             | StrideExpr( sym name, int dim )
             | ParRange( expr lo, expr hi ) -- only use for loop cond
             | SeqRange( expr lo, expr hi ) -- only use for loop cond
+            | ForkCount( expr thread_count )
             | ReadConfig( config config, string field )
             attributes( srcinfo srcinfo )
 

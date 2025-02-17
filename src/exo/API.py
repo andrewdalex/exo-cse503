@@ -30,6 +30,26 @@ from .core import internal_cursors as IC
 # --------------------------------------------------------------------------- #
 # --------------------------------------------------------------------------- #
 # Top-level decorator
+class UASTProc(ProcedureBase):
+    def __init__(self, proc):
+        self.proc = proc
+
+
+def uast_proc(f, _instr=None) -> "UASTProc":
+    if not isinstance(f, types.FunctionType):
+        raise TypeError("@proc decorator must be applied to a function")
+
+    body, src_info = get_ast_from_python(f)
+    assert isinstance(body, pyast.FunctionDef)
+
+    parser = Parser(
+        body,
+        src_info,
+        parent_scope=get_parent_scope(depth=3 if _instr else 2),
+        instr=_instr,
+        as_func=True,
+    )
+    return UASTProc(parser.result())
 
 
 def proc(f, _instr=None) -> "Procedure":
