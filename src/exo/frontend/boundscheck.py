@@ -1080,7 +1080,9 @@ class CheckBounds:
 
                 body_eff = eff_concat(eff, body_eff)
 
-            elif isinstance(stmt, (LoopIR.Pass, LoopIR.WindowStmt)):
+            elif isinstance(
+                stmt, (LoopIR.Pass, LoopIR.WindowStmt, LoopIR.Barrier, LoopIR.Fork)
+            ):
                 pass
 
             else:

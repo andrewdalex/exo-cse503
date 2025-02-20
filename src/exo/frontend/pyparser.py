@@ -1236,6 +1236,8 @@ class Parser:
                 if self.is_fragment:
                     lo, hi = cond
                     rstmts.append(PAST.For(itr, lo, hi, body, self.getsrcinfo(s)))
+                elif isinstance(cond, UAST.ForkCount):
+                    rstmts.append(UAST.Fork(itr, cond, body, self.getsrcinfo(s)))
                 else:
                     rstmts.append(UAST.For(itr, cond, body, self.getsrcinfo(s)))
 
@@ -1297,22 +1299,27 @@ class Parser:
                             PAST.Call(s.value.func.id, args, self.getsrcinfo(s.value))
                         )
                 else:
-                    f = self.eval_expr(s.value.func)
-                    if not isinstance(f, ProcedureBase):
-                        self.err(
-                            s.value.func, f"expected called object " "to be a procedure"
+                    if s.value.func.id == "Barrier":
+                        rstmts.append(UAST.Barrier(self.getsrcinfo(s.value)))
+                    else:
+                        f = self.eval_expr(s.value.func)
+                        if not isinstance(f, ProcedureBase):
+                            self.err(
+                                s.value.func,
+                                f"expected called object " "to be a procedure",
+                            )
+
+                        if len(s.value.keywords) > 0:
+                            self.err(
+                                s.value,
+                                "cannot call procedure() " "with keyword arguments",
+                            )
+
+                        args = [self.parse_expr(a) for a in s.value.args]
+
+                        rstmts.append(
+                            UAST.Call(f.INTERNAL_proc(), args, self.getsrcinfo(s.value))
                         )
-
-                    if len(s.value.keywords) > 0:
-                        self.err(
-                            s.value, "cannot call procedure() " "with keyword arguments"
-                        )
-
-                    args = [self.parse_expr(a) for a in s.value.args]
-
-                    rstmts.append(
-                        UAST.Call(f.INTERNAL_proc(), args, self.getsrcinfo(s.value))
-                    )
 
             # ----- Pass no-op parsing
             elif isinstance(s, pyast.Pass):
@@ -1355,6 +1362,15 @@ class Parser:
                         return UAST.ParRange(lo, hi, self.getsrcinfo(cond))
                     else:
                         return UAST.SeqRange(lo, hi, self.getsrcinfo(cond))
+            elif isinstance(cond.func, pyast.Name) and cond.func.id == "fork":
+                if len(cond.keywords) > 0:
+                    self.err(cond, "fork() does not support" " named arguments")
+                elif len(cond.args) != 1:
+                    self.err(cond, "fork() expects exactly" " 1 argument")
+
+                thread_count = self.parse_expr(cond.args[0])
+                return UAST.ForkCount(thread_count, self.getsrcinfo(cond))
+
             else:
                 self.err(
                     cond,

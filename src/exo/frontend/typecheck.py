@@ -349,6 +349,26 @@ class TypeChecker:
             check_call_types(self.err, args, stmt.f.args)
 
             return [LoopIR.Call(stmt.f, args, stmt.srcinfo)]
+        elif isinstance(stmt, UAST.Barrier):
+            return [LoopIR.Barrier(stmt.srcinfo)]
+        elif isinstance(stmt, UAST.Fork):
+            self.env[stmt.tid] = T.index
+            if not isinstance(stmt.thread_count, UAST.ForkCount):
+                self.err(stmt.cond, "expected forked count to be constant.")
+            thread_count = self.check_e(stmt.thread_count.thread_count, is_index=True)
+
+            if thread_count.type != T.err and not thread_count.type.is_indexable():
+                self.err(thread_count, "expected forked count to be constant.")
+
+            if not isinstance(thread_count, LoopIR.Const):
+                if thread_count is None:
+                    self.err(stmt.cond, "expected forked count to be constant.")
+                else:
+                    self.err(thread_count, "expected forked count to be constant.")
+
+            body = self.check_stmts(stmt.body)
+            return [LoopIR.Fork(stmt.tid, thread_count, body, stmt.srcinfo)]
+
         else:
             assert False, f"not a loopir in check_stmts {type(stmt)}"
 
