@@ -103,3 +103,60 @@ def test_thread_local_ok():
 
     detector = DataRaceDetection(foo.INTERNAL_proc())
     assert not detector.has_data_race()
+
+
+def test_basic_branch_unsafe():
+    @proc
+    def foo(a: i8[10]):
+        for tid in fork(2):
+            if tid == 0 or tid == 1:
+                for i in seq(0, 10):
+                    a[i] = 0
+
+    detector = DataRaceDetection(foo.INTERNAL_proc())
+    assert detector.has_data_race()
+
+
+def test_basic_branch_safe():
+    @proc
+    def foo(a: i8[10]):
+        for tid in fork(2):
+            if tid == 0:
+                for i in seq(0, 5):
+                    a[i] = 0
+            if tid == 1:
+                for i in seq(5, 10):
+                    a[i] = 1
+
+    detector = DataRaceDetection(foo.INTERNAL_proc())
+    assert not detector.has_data_race()
+
+
+def test_if_else_safe():
+    @proc
+    def foo(a: i8[10]):
+        for tid in fork(2):
+            if tid == 0:
+                for i in seq(0, 5):
+                    a[i] = 0
+            else:
+                for i in seq(5, 10):
+                    a[i] = 1
+
+    detector = DataRaceDetection(foo.INTERNAL_proc())
+    assert not detector.has_data_race()
+
+
+def test_if_else_not_safe():
+    @proc
+    def foo(a: i8[10]):
+        for tid in fork(3):
+            if tid == 0:
+                for i in seq(0, 5):
+                    a[i] = 0
+            else:  # tid 1 and 2
+                for i in seq(5, 10):
+                    a[i] = 1
+
+    detector = DataRaceDetection(foo.INTERNAL_proc())
+    assert detector.has_data_race()
