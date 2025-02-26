@@ -68,3 +68,38 @@ def test_verifies_overlapping_zero_copy_unsafe():
 
     detector = DataRaceDetection(foo.INTERNAL_proc())
     assert detector.has_data_race()
+
+
+def test_reads_overlap_writes():
+    @proc
+    def foo(a: i8[10]):
+        for tid in fork(2):
+            for i in seq(0, 5):
+                a[i + 5 * tid] = a[i]
+
+    detector = DataRaceDetection(foo.INTERNAL_proc())
+    assert detector.has_data_race()
+
+
+def test_reads_not_overlap_writes():
+    @proc
+    def foo(a: i8[10]):
+        for tid in fork(2):
+            for i in seq(0, 4):
+                a[i + 5 * tid] = a[9]
+
+    detector = DataRaceDetection(foo.INTERNAL_proc())
+    assert not detector.has_data_race()
+
+
+def test_thread_local_ok():
+    @proc
+    def foo(a: i8[10]):
+        for tid in fork(2):
+            sum: i8
+            sum = 0
+            for i in seq(0, 5):
+                sum += a[i + 5 * tid]
+
+    detector = DataRaceDetection(foo.INTERNAL_proc())
+    assert not detector.has_data_race()
