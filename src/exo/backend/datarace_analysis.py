@@ -7,6 +7,8 @@ from ..core.LoopIR import LoopIR
 
 class DataRaceDetection:
     def __init__(self, proc: LoopIR.proc):
+        # clear symbolic variables created in bounds checking
+        reset_env()
         self.proc = proc
         # name -> write/read (resp.) access formula (parameterized by program var's symbol)
         # does not need chain map because only one shared var per name visible from fork
@@ -213,6 +215,7 @@ class DataRaceDetection:
 
         access_sym1 = Symbol("idx1", BV32)
         access_sym2 = Symbol("idx2", BV32)
+
         for k, v in self.prog_var_to_writes.items():
             access_param = self.prog_var_to_sym[k]
             access_set_1 = v.substitute({tid: thread_1, access_param: access_sym1})
@@ -249,6 +252,7 @@ class DataRaceDetection:
                     print("R/W DataRace!")
                     print(reads_model)
                     return False
+        self.del_scope()
         return True
 
     @staticmethod
@@ -265,10 +269,21 @@ class DataRaceDetection:
         """
         return true if there exists a data race in this proc body
         """
+        for pred_expr in self.proc.preds:
+            prog_vars = DataRaceDetection.get_prog_var_used_in_expr(pred_expr)
+            for v in prog_vars:
+                self.get_or_create_sym_var(v)
+            formula = self.formula_from_expr(pred_expr)
+
+            self.refine_control(formula)
+
+        self.new_scope()
         for stmt in self._stmts:
             if isinstance(stmt, LoopIR.Fork):
                 if not self.is_fork_body_safe(stmt):
                     return True
+                self.prog_var_to_writes = {}
+                self.prog_var_to_reads = {}
         return False
 
     def new_scope(self):

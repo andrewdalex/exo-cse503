@@ -160,3 +160,19 @@ def test_if_else_not_safe():
 
     detector = DataRaceDetection(foo.INTERNAL_proc())
     assert detector.has_data_race()
+
+
+def test_array_dependent_type_restricts_racey_loop():
+    @proc
+    def foo(m: size, a: i8[m]):
+        assert m == 5
+        for tid in fork(3):
+            if tid == 0:
+                for i in seq(0, m):
+                    a[i] = 0
+            else:
+                for i in seq(6, m):
+                    a[i] = 1
+
+    detector = DataRaceDetection(foo.INTERNAL_proc())
+    assert not detector.has_data_race()
