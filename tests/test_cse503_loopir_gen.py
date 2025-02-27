@@ -4,6 +4,8 @@ import pytest
 from exo import proc
 from exo.backend.datarace_analysis import DataRaceDetection
 
+from src.exo.API_cursors import WindowExprCursor
+
 
 def test_basic_parsing():
     @proc
@@ -173,6 +175,61 @@ def test_array_dependent_type_restricts_racey_loop():
             else:
                 for i in seq(6, m):
                     a[i] = 1
+
+    detector = DataRaceDetection(foo.INTERNAL_proc())
+    assert not detector.has_data_race()
+
+
+def test_fork_in_loop_safe():
+    @proc
+    def foo(a: i8[10]):
+        for i in seq(0, 5):
+            for tid in fork(2):
+                a[2 * i + tid] = 0
+
+    detector = DataRaceDetection(foo.INTERNAL_proc())
+    assert not detector.has_data_race()
+
+
+def test_fork_in_loop_unsafe():
+    @proc
+    def foo(a: i8[10]):
+        for i in seq(0, 5):
+            for tid in fork(2):
+                a[i] = 0
+
+    detector = DataRaceDetection(foo.INTERNAL_proc())
+    assert detector.has_data_race()
+
+
+def test_drb001_yes():
+    @proc
+    def foo(a: i32[1000]):
+        for tid in fork(2):
+            for i in seq(0, 499):
+                a[i + 500 * tid] = a[i + 499 * tid + 1] + 1
+            # boundary
+            if tid == 0:
+                a[499] = a[500] + 1
+            else:
+                a[998] = a[999] + 1
+
+    detector = DataRaceDetection(foo.INTERNAL_proc())
+    assert detector.has_data_race()
+
+
+def test_drb112_no():
+    """
+
+    DRB is testing the linear clause in OMP here, Exo can't really do this
+    but this is semantically equivalent
+    """
+
+    @proc
+    def foo(a: i32[100], b: i32[100], c: i32[100]):
+        for tid in fork(2):
+            for i in seq(0, 50):
+                c[i + tid * 50] += a[i + tid * 50] * b[i + tid * 50]
 
     detector = DataRaceDetection(foo.INTERNAL_proc())
     assert not detector.has_data_race()

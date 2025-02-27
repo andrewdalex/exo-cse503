@@ -5,6 +5,13 @@ from pysmt.typing import BV32
 from ..core.LoopIR import LoopIR
 
 
+class DataRaceException(Exception):
+    def __init__(self, message="", model=None):
+        self.message = message
+        self.model = model
+        super().__init__(message)
+
+
 class DataRaceDetection:
     def __init__(self, proc: LoopIR.proc):
         # clear symbolic variables created in bounds checking
@@ -25,6 +32,12 @@ class DataRaceDetection:
         # thread locals
         self.thread_locals = ChainMap()
         self._stmts = proc.body
+
+        # metavars for verification (can't make duplicate symbols)
+        self._thread_1 = Symbol("thread_1", BV32)
+        self._thread_2 = Symbol("thread_2", BV32)
+        self._access_sym1 = Symbol("idx1", BV32)
+        self._access_sym2 = Symbol("idx2", BV32)
 
     def add_writes(self, name, access_formula):
 
@@ -144,7 +157,32 @@ class DataRaceDetection:
 
     def proc_stmts(self, stmts):
         for stmt in stmts:
-            if isinstance(stmt, (LoopIR.Reduce, LoopIR.Assign)):
+            if isinstance(stmt, LoopIR.Fork):
+                if isinstance(stmt.thread_count, LoopIR.Const):
+                    thread_count = stmt.thread_count.val
+                else:
+                    assert False
+                self.new_scope()
+                tid = self.get_or_create_sym_var(stmt.tid)
+                self.thread_locals[stmt.tid] = True
+                thread_domains = And(
+                    [
+                        And(BVUGE(t, BV(0, 32)), BVULT(t, BV(thread_count, 32)))
+                        for t in [self._thread_1, self._thread_2]
+                    ]
+                )
+                thread_domains = And(
+                    thread_domains, NotEquals(self._thread_1, self._thread_2)
+                )
+                fixed_vars = [
+                    self.prog_var_to_sym[k] for k in self.thread_locals.keys()
+                ]
+                self.thread_locals = ChainMap()
+                self.proc_stmts(stmt.body)
+                self.verify(tid, thread_domains, fixed_vars)
+                self.del_scope()
+
+            elif isinstance(stmt, (LoopIR.Reduce, LoopIR.Assign)):
                 self.add_reads_in_expr(stmt.rhs)
                 if stmt.name in self.thread_locals:
                     continue
@@ -177,6 +215,7 @@ class DataRaceDetection:
                 )
                 self.proc_stmts(stmt.body)
                 self.del_scope()
+
             elif isinstance(stmt, LoopIR.If):
                 self.new_scope()
                 cond = self.formula_from_expr(stmt.cond)
@@ -190,31 +229,16 @@ class DataRaceDetection:
                 self.proc_stmts(stmt.orelse)
                 self.del_scope()
 
-    def is_fork_body_safe(self, fork_stmt):
-        """
-        returns "if fork body is safe"
-        """
-        if isinstance(fork_stmt.thread_count, LoopIR.Const):
-            thread_count = fork_stmt.thread_count.val
-        else:
-            assert False
-        tid = self.get_or_create_sym_var(fork_stmt.tid)
-        self.thread_locals[fork_stmt.tid] = True
+        return True
 
-        thread_1 = Symbol("thread_1", BV32)
-        thread_2 = Symbol("thread_2", BV32)
-        thread_domains = And(
-            [
-                And(BVUGE(t, BV(0, 32)), BVULT(t, BV(thread_count, 32)))
-                for t in [thread_1, thread_2]
-            ]
-        )
-        thread_domains = And(thread_domains, NotEquals(thread_1, thread_2))
-        self.new_scope()
-        self.proc_stmts(fork_stmt.body)
-
-        access_sym1 = Symbol("idx1", BV32)
-        access_sym2 = Symbol("idx2", BV32)
+    def verify(self, tid, thread_domains, fixed_vars):
+        """
+        true if program is safe
+        """
+        access_sym1 = self._access_sym1
+        access_sym2 = self._access_sym2
+        thread_1 = self._thread_1
+        thread_2 = self._thread_2
 
         for k, v in self.prog_var_to_writes.items():
             access_param = self.prog_var_to_sym[k]
@@ -223,7 +247,7 @@ class DataRaceDetection:
             # need to remap all symbolic values in access set except thread id and the access param
             # to avoid introducing "synchronization" between the sets
             remapped_access_set_2 = DataRaceDetection.remap_free_vars(
-                v, [tid, access_param]
+                v, fixed_vars + [access_param]
             )
             access_set_2 = remapped_access_set_2.substitute(
                 {tid: thread_2, access_param: access_sym2}
@@ -234,13 +258,11 @@ class DataRaceDetection:
             writes_model = get_model(And(f, domains))
 
             if writes_model:
-                print("W/W DataRace!")
-                # print(writes_model)
-                return False
+                raise DataRaceException("W/W DataRace!", writes_model)
 
             if k in self.prog_var_to_reads:
                 reads_access_set = DataRaceDetection.remap_free_vars(
-                    self.prog_var_to_reads[k], [tid, access_param]
+                    self.prog_var_to_reads[k], fixed_vars + [access_param]
                 )
                 reads_access_set = reads_access_set.substitute(
                     {tid: thread_2, access_param: access_sym2}
@@ -249,11 +271,7 @@ class DataRaceDetection:
                 domains = And([access_set_1, reads_access_set, thread_domains])
                 reads_model = get_model(And(f, domains))
                 if reads_model:
-                    print("R/W DataRace!")
-                    print(reads_model)
-                    return False
-        self.del_scope()
-        return True
+                    raise DataRaceException("R/W DataRace!", reads_model)
 
     @staticmethod
     def remap_free_vars(formula, fixed_vars):
@@ -277,13 +295,12 @@ class DataRaceDetection:
 
             self.refine_control(formula)
 
-        self.new_scope()
-        for stmt in self._stmts:
-            if isinstance(stmt, LoopIR.Fork):
-                if not self.is_fork_body_safe(stmt):
-                    return True
-                self.prog_var_to_writes = {}
-                self.prog_var_to_reads = {}
+        try:
+            self.proc_stmts(self._stmts)
+        except DataRaceException as e:
+            print(e)
+            return True
+
         return False
 
     def new_scope(self):
