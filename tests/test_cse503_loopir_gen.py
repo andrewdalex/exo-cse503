@@ -233,3 +233,130 @@ def test_drb112_no():
 
     detector = DataRaceDetection(foo.INTERNAL_proc())
     assert not detector.has_data_race()
+
+
+# Barriers
+def test_barrier_simple_safe():
+    @proc
+    def foo(a: i8[10]):
+        for tid in fork(2):
+            for i in seq(0, 5):
+                a[2 * i + tid] = 0
+            Barrier()
+            a[5 + tid] = 1
+
+    detector = DataRaceDetection(foo.INTERNAL_proc())
+    assert not detector.has_data_race()
+
+
+def test_barrier_simple_unsafe_before():
+    @proc
+    def foo(a: i8[10]):
+        for tid in fork(2):
+            for i in seq(0, 5):
+                a[2 * i] = 0
+            Barrier()
+            a[5 + tid] = 1
+
+    detector = DataRaceDetection(foo.INTERNAL_proc())
+    assert detector.has_data_race()
+
+
+def test_barrier_simple_unsafe_after():
+    @proc
+    def foo(a: i8[10]):
+        for tid in fork(2):
+            for i in seq(0, 5):
+                a[2 * i + tid] = 0
+            Barrier()
+            a[5] = 1
+
+    detector = DataRaceDetection(foo.INTERNAL_proc())
+    assert detector.has_data_race()
+
+
+def test_barrier_three_regions_safe():
+    @proc
+    def foo(a: i8[10]):
+        for tid in fork(3):
+            a[tid] = 0  # 0, 1, 2
+            Barrier()
+            a[1 + tid] = 10  # 1, 2, 3
+            a[4 + tid] = 100  # 4, 5, 6
+            Barrier()
+            a[2 * tid] = a[2 * tid + 1]  # writes 0 2 4, reads 1 3 5
+
+    detector = DataRaceDetection(foo.INTERNAL_proc())
+    assert not detector.has_data_race()
+
+
+def test_barrier_three_regions_unsafe():
+    @proc
+    def foo(a: i8[10]):
+        for tid in fork(3):
+            a[tid] = 0  # 0, 1, 2
+            # Barrier()
+            a[1 + tid] = 10  # 1, 2, 3
+            a[4 + tid] = 100  # 4, 5, 6
+            Barrier()
+            a[2 * tid] = a[2 * tid + 1]  # writes 0 2 4, reads 1 3 5
+
+    detector = DataRaceDetection(foo.INTERNAL_proc())
+    assert detector.has_data_race()
+
+
+def test_barrier_three_regions_unsafe2():
+    @proc
+    def foo(a: i8[10]):
+        for tid in fork(3):
+            a[tid] = 0  # 0, 1, 2
+            Barrier()
+            a[1 + tid] = 10  # 1, 2, 3
+            a[4 + tid] = 100  # 4, 5, 6
+            # Barrier()
+            a[2 * tid] = a[2 * tid + 1]  # writes 0 2 4, reads 1 3 5
+
+    detector = DataRaceDetection(foo.INTERNAL_proc())
+    assert detector.has_data_race()
+
+
+def test_multiple_forks_safe():
+    @proc
+    def foo(a: i8[10]):
+        for tid in fork(2):
+            for i in seq(0, 5):
+                a[2 * i + tid] = 0
+        for tid in fork(2):
+            for i in seq(0, 5):
+                a[2 * i + tid] = 10
+
+    detector = DataRaceDetection(foo.INTERNAL_proc())
+    assert not detector.has_data_race()
+
+
+def test_multiple_forks_unsafe_first():
+    @proc
+    def foo(a: i8[10]):
+        for tid in fork(2):
+            for i in seq(0, 5):
+                a[2 * i] = 0
+        for tid in fork(2):
+            for i in seq(0, 5):
+                a[2 * i + tid] = 10
+
+    detector = DataRaceDetection(foo.INTERNAL_proc())
+    assert detector.has_data_race()
+
+
+def test_multiple_forks_unsafe_second():
+    @proc
+    def foo(a: i8[10]):
+        for tid in fork(2):
+            for i in seq(0, 5):
+                a[2 * i + tid] = 0
+        for tid in fork(2):
+            for i in seq(0, 5):
+                a[2 * i] = 10
+
+    detector = DataRaceDetection(foo.INTERNAL_proc())
+    assert detector.has_data_race()

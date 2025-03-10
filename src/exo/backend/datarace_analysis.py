@@ -155,32 +155,55 @@ class DataRaceDetection:
             self.add_reads_in_expr(expr.lhs)
             self.add_reads_in_expr(expr.rhs)
 
+    def split_on_barriers(self, fork_body):
+        regions = []
+        curr = []
+        for stmt in fork_body:
+            if isinstance(stmt, LoopIR.Barrier):
+                regions.append(curr)
+                curr = []
+            else:
+                curr.append(stmt)
+        if curr:
+            regions.append(curr)
+        return regions
+
     def proc_stmts(self, stmts):
         for stmt in stmts:
+            if isinstance(stmt, LoopIR.Barrier):
+                assert False
             if isinstance(stmt, LoopIR.Fork):
                 if isinstance(stmt.thread_count, LoopIR.Const):
                     thread_count = stmt.thread_count.val
                 else:
                     assert False
-                self.new_scope()
-                tid = self.get_or_create_sym_var(stmt.tid)
-                self.thread_locals[stmt.tid] = True
-                thread_domains = And(
-                    [
-                        And(BVUGE(t, BV(0, 32)), BVULT(t, BV(thread_count, 32)))
-                        for t in [self._thread_1, self._thread_2]
+                regions = self.split_on_barriers(stmt.body)
+
+                for region in regions:
+                    self.new_scope()
+                    tid = self.get_or_create_sym_var(stmt.tid)
+                    self.thread_locals[stmt.tid] = True
+                    thread_domains = And(
+                        [
+                            And(BVUGE(t, BV(0, 32)), BVULT(t, BV(thread_count, 32)))
+                            for t in [self._thread_1, self._thread_2]
+                        ]
+                    )
+                    thread_domains = And(
+                        thread_domains, NotEquals(self._thread_1, self._thread_2)
+                    )
+                    fixed_vars = [
+                        self.prog_var_to_sym[k] for k in self.thread_locals.keys()
                     ]
-                )
-                thread_domains = And(
-                    thread_domains, NotEquals(self._thread_1, self._thread_2)
-                )
-                fixed_vars = [
-                    self.prog_var_to_sym[k] for k in self.thread_locals.keys()
-                ]
-                self.thread_locals = ChainMap()
-                self.proc_stmts(stmt.body)
-                self.verify(tid, thread_domains, fixed_vars)
-                self.del_scope()
+                    self.thread_locals = ChainMap()
+                    self.proc_stmts(region)
+                    self.verify(tid, thread_domains, fixed_vars)
+
+                    # clear reads and writes
+                    self.prog_var_to_writes.clear()
+                    self.prog_var_to_reads.clear()
+
+                    self.del_scope()
 
             elif isinstance(stmt, (LoopIR.Reduce, LoopIR.Assign)):
                 self.add_reads_in_expr(stmt.rhs)
