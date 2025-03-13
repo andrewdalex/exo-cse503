@@ -155,13 +155,62 @@ class DataRaceDetection:
             self.add_reads_in_expr(expr.lhs)
             self.add_reads_in_expr(expr.rhs)
 
-    def split_on_barriers(self, fork_body):
+    def loop_regions(self, stmt):
+        self.new_scope()
+        self.thread_locals[stmt.iter] = True
+        sym_var = self.get_or_create_sym_var(stmt.iter)
+        lower = self.formula_from_expr(stmt.lo)
+        upper = self.formula_from_expr(stmt.hi)
+        self.domains[stmt.iter] = And(BVUGE(sym_var, lower), BVULT(sym_var, upper))
+        regions = []
+        curr = []
+        for stmt in stmt.body:
+            if isinstance(stmt, LoopIR.Barrier):
+                regions.append(curr)
+                curr = []
+            elif isinstance(stmt, LoopIR.For):
+                subregions = self.loop_regions(stmt.body)
+                if len(subregions) > 1:
+                    # no barriers in nested loops
+                    assert False
+                curr.append(stmt)
+            elif isinstance(stmt, LoopIR.Fork):
+                # no nested forks
+                assert False
+            else:
+                curr.append(stmt)
+        if curr:
+            regions.append(curr)
+        self.del_scope()
+        return regions
+
+    def fork_regions(self, fork_body):
         regions = []
         curr = []
         for stmt in fork_body:
             if isinstance(stmt, LoopIR.Barrier):
                 regions.append(curr)
                 curr = []
+            elif isinstance(stmt, LoopIR.Fork):
+                # no nested forks
+                assert False
+            elif isinstance(stmt, LoopIR.For):
+                loop_regions = self.loop_regions(stmt)
+                if len(loop_regions) == 1:
+                    curr = curr + loop_regions[0]
+                else:
+                    # entry = before loop + loop body until the first barrier
+                    regions.append(curr + loop_regions[0])
+
+                    # internal regions:
+                    for i in range(1, len(loop_regions) - 1):
+                        regions.append(loop_regions[i])
+
+                    # loop re-entry = last barrier until loop exit + loop body until first barrier
+                    regions.append(loop_regions[-1] + loop_regions[0])
+
+                    # exit = last barrier until loop exit
+                    curr = loop_regions[-1]
             else:
                 curr.append(stmt)
         if curr:
@@ -177,7 +226,7 @@ class DataRaceDetection:
                     thread_count = stmt.thread_count.val
                 else:
                     assert False
-                regions = self.split_on_barriers(stmt.body)
+                regions = self.fork_regions(stmt.body)
 
                 for region in regions:
                     self.new_scope()
