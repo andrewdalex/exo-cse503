@@ -179,8 +179,7 @@ class DataRaceDetection:
                 assert False
             else:
                 curr.append(stmt)
-        if curr:
-            regions.append(curr)
+        regions.append(curr)
         self.del_scope()
         return regions
 
@@ -223,7 +222,13 @@ class DataRaceDetection:
                         )
 
                     # loop re-entry = last barrier until loop exit + loop body until first barrier
-                    regions.append(loop_regions[-1] + loop_regions[0])
+                    cross_iter = loop_regions[-1] + loop_regions[0]
+                    regions.append((loop_regions[-1], loop_regions[0], sym_var))
+                    sym_var_nxt = self.get_or_create_sym_var(str(stmt.iter) + "_nxt")
+                    self.domains[str(stmt.iter) + "_loop"] = And(
+                        Equals(sym_var_nxt, BVAdd(sym_var, BV(1, 32))),
+                        And(BVUGE(sym_var, lower), BVULT(sym_var, upper)),
+                    )
 
                     # exit = last barrier until loop exit
                     curr = loop_regions[-1]
@@ -232,8 +237,7 @@ class DataRaceDetection:
                     )
             else:
                 curr.append(stmt)
-        if curr:
-            regions.append(curr)
+        regions.append(curr)
 
         return regions
 
@@ -266,7 +270,14 @@ class DataRaceDetection:
                     ]
 
                     self.thread_locals = ChainMap()
-                    self.proc_stmts(region)
+                    if isinstance(region, tuple):
+                        # loop crossover region
+                        self.proc_stmts(region[1])
+                        self.rename(region[2])
+                        self.proc_stmts(region[0])
+                    else:
+                        self.proc_stmts(region)
+
                     self.verify(tid, thread_domains, fixed_vars)
 
                     # clear reads and writes
@@ -323,6 +334,12 @@ class DataRaceDetection:
                 self.del_scope()
 
         return True
+
+    def rename(self, sym_var):
+        for k, v in self.prog_var_to_writes.items():
+            self.prog_var_to_writes[k] = v.substitute(
+                {sym_var: Symbol(f"{sym_var._content.payload[0]}_nxt", BV32)}
+            )
 
     def verify(self, tid, thread_domains, fixed_vars):
         """

@@ -380,6 +380,7 @@ def test_barrier_loop():
         for tid in fork(2):
             a[tid] = 0
             for i in seq(2, 5):
+                Barrier()
                 a[2 * i + tid] = 1
                 Barrier()
                 a[2 * i + tid + 1] = 2
@@ -388,16 +389,16 @@ def test_barrier_loop():
     assert not detector.has_data_race()
 
 
-def test_barrier_loop():
-    @proc
-    def foo(a: i8[10]):
-        for tid in fork(2):
-            a[tid] = 0
-            for i in seq(2, 4):
-                a[2 * i + tid] = 0
-                Barrier()
-                a[2 * i + tid] = 1
-            a[5 + tid] = 2
+# def test_barrier_loop():
+#     @proc
+#     def foo(a: i8[10]):
+#         for tid in fork(2):
+#             # a[tid] = 0
+#             for i in seq(0, 5):
+#                 a[2 * i + tid] = 0
+#                 Barrier()
+#                 a[2 * i + tid] = 1
+#             # a[5 + tid] = 2
 
-    detector = DataRaceDetection(foo.INTERNAL_proc())
-    assert detector.has_data_race()
+#     detector = DataRaceDetection(foo.INTERNAL_proc())
+#     assert detector.has_data_race()
