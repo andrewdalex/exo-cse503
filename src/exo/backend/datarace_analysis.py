@@ -204,19 +204,32 @@ class DataRaceDetection:
                     self.domains[stmt.iter] = And(
                         BVUGE(sym_var, lower), BVULT(sym_var, upper)
                     )
-                # else:
-                #     # entry = before loop + loop body until the first barrier
-                #     regions.append(curr + loop_regions[0])
+                else:
+                    sym_var = self.get_or_create_sym_var(stmt.iter)
+                    lower = self.formula_from_expr(stmt.lo)
+                    upper = self.formula_from_expr(stmt.hi)
 
-                #     # internal regions:
-                #     for i in range(1, len(loop_regions) - 1):
-                #         regions.append(loop_regions[i])
+                    # entry = before loop + loop body until the first barrier
+                    regions.append(curr + loop_regions[0])
+                    self.domains[str(stmt.iter) + "_pre"] = And(
+                        BVUGE(sym_var, lower), BVULT(sym_var, upper)
+                    )
 
-                #     # loop re-entry = last barrier until loop exit + loop body until first barrier
-                #     regions.append(loop_regions[-1] + loop_regions[0])
+                    # internal regions:
+                    for i in range(1, len(loop_regions) - 1):
+                        regions.append(loop_regions[i])
+                        self.domains[str(stmt.iter) + "_internal_" + str(i)] = And(
+                            BVUGE(sym_var, lower), BVULT(sym_var, upper)
+                        )
 
-                #     # exit = last barrier until loop exit
-                #     curr = loop_regions[-1]
+                    # loop re-entry = last barrier until loop exit + loop body until first barrier
+                    regions.append(loop_regions[-1] + loop_regions[0])
+
+                    # exit = last barrier until loop exit
+                    curr = loop_regions[-1]
+                    self.domains[str(stmt.iter) + "_post"] = And(
+                        BVUGE(sym_var, lower), BVULT(sym_var, upper)
+                    )
             else:
                 curr.append(stmt)
         if curr:
