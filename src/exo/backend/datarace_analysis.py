@@ -197,24 +197,31 @@ class DataRaceDetection:
             elif isinstance(stmt, LoopIR.For):
                 loop_regions = self.loop_regions(stmt)
                 if len(loop_regions) == 1:
-                    curr = curr + loop_regions[0]
-                else:
-                    # entry = before loop + loop body until the first barrier
-                    regions.append(curr + loop_regions[0])
+                    curr += loop_regions[0]
+                    sym_var = self.get_or_create_sym_var(stmt.iter)
+                    lower = self.formula_from_expr(stmt.lo)
+                    upper = self.formula_from_expr(stmt.hi)
+                    self.domains[stmt.iter] = And(
+                        BVUGE(sym_var, lower), BVULT(sym_var, upper)
+                    )
+                # else:
+                #     # entry = before loop + loop body until the first barrier
+                #     regions.append(curr + loop_regions[0])
 
-                    # internal regions:
-                    for i in range(1, len(loop_regions) - 1):
-                        regions.append(loop_regions[i])
+                #     # internal regions:
+                #     for i in range(1, len(loop_regions) - 1):
+                #         regions.append(loop_regions[i])
 
-                    # loop re-entry = last barrier until loop exit + loop body until first barrier
-                    regions.append(loop_regions[-1] + loop_regions[0])
+                #     # loop re-entry = last barrier until loop exit + loop body until first barrier
+                #     regions.append(loop_regions[-1] + loop_regions[0])
 
-                    # exit = last barrier until loop exit
-                    curr = loop_regions[-1]
+                #     # exit = last barrier until loop exit
+                #     curr = loop_regions[-1]
             else:
                 curr.append(stmt)
         if curr:
             regions.append(curr)
+
         return regions
 
     def proc_stmts(self, stmts):
@@ -244,6 +251,7 @@ class DataRaceDetection:
                     fixed_vars = [
                         self.prog_var_to_sym[k] for k in self.thread_locals.keys()
                     ]
+
                     self.thread_locals = ChainMap()
                     self.proc_stmts(region)
                     self.verify(tid, thread_domains, fixed_vars)
