@@ -375,6 +375,11 @@ def test_barrier_loop():
 
 
 def test_barrier_loop():
+    """
+
+    Failing because interior regions not supported yet
+    """
+
     @proc
     def foo(a: i8[10]):
         for tid in fork(2):
@@ -396,6 +401,7 @@ def test_single_barrier_in_loop():
             a[tid] = 0
             for i in seq(2, 10):
                 a[i + tid] = 0
+                Barrier()
 
     detector = DataRaceDetection(foo.INTERNAL_proc())
     assert not detector.has_data_race()

@@ -232,11 +232,13 @@ class DataRaceDetection:
                     )
 
                     # TODO internal regions:
-                    for i in range(1, len(loop_regions) - 1):
-                        regions.append(loop_regions[i])
-                        self.domains[str(stmt.iter) + "_internal_" + str(i)] = And(
-                            BVUGE(sym_var, lower), BVULT(sym_var, upper)
-                        )
+                    if (len(loop_regions) - 1) >= 2:
+                        assert False, "Internal regions not supported"
+                    # for i in range(1, len(loop_regions) - 1):
+                    #     regions.append(loop_regions[i])
+                    #     self.domains[str(stmt.iter) + "_internal_" + str(i)] = And(
+                    #         BVUGE(sym_var, lower), BVULT(sym_var, upper)
+                    #     )
 
                     # loop re-entry = last barrier until loop exit + loop body until first barrier
                     # TODO off by one in crossover domain
