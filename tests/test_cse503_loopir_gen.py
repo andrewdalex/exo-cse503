@@ -389,6 +389,33 @@ def test_barrier_loop():
     assert not detector.has_data_race()
 
 
+def test_single_barrier_in_loop():
+    @proc
+    def foo(a: i8[1000]):
+        for tid in fork(2):
+            a[tid] = 0
+            for i in seq(2, 10):
+                a[i + tid] = 0
+
+    detector = DataRaceDetection(foo.INTERNAL_proc())
+    assert not detector.has_data_race()
+
+
+def test_drb120_no():
+    @proc
+    def foo(var: i8[1]):
+        var[0] = 0
+        for tid in fork(2):
+            if tid == 0:
+                var[0] += 1
+            Barrier()
+            if tid == 1:
+                var[0] += 1
+
+    detector = DataRaceDetection(foo.INTERNAL_proc())
+    assert not detector.has_data_race()
+
+
 # def test_barrier_loop():
 #     @proc
 #     def foo(a: i8[10]):

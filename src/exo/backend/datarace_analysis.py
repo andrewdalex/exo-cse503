@@ -5,6 +5,21 @@ from pysmt.typing import BV32
 from ..core.LoopIR import LoopIR
 
 
+class Region:
+    def __init__(self, stmts, domain_restrictions):
+        self.stmts = stmts
+        self.domain_restrictions = domain_restrictions
+
+
+class LoopCrossOverRegion:
+    def __init__(self, i_stmts, i1_stmts, loop_iter, domain):
+        self.i_stmts = i_stmts
+        self.i1_stmts = i1_stmts
+
+        self.loop_iter = loop_iter
+        self.domain = domain
+
+
 class DataRaceException(Exception):
     def __init__(self, message="", model=None):
         self.message = message
@@ -184,11 +199,12 @@ class DataRaceDetection:
         return regions
 
     def fork_regions(self, fork_body):
-        regions = []
+        regions: list[Region | LoopCrossOverRegion] = []
         curr = []
+        curr_dom_restrict = {}
         for stmt in fork_body:
             if isinstance(stmt, LoopIR.Barrier):
-                regions.append(curr)
+                regions.append(Region(curr, {}))
                 curr = []
             elif isinstance(stmt, LoopIR.Fork):
                 # no nested forks
@@ -209,12 +225,13 @@ class DataRaceDetection:
                     upper = self.formula_from_expr(stmt.hi)
 
                     # entry = before loop + loop body until the first barrier
-                    regions.append(curr + loop_regions[0])
-                    self.domains[str(stmt.iter) + "_pre"] = And(
-                        BVUGE(sym_var, lower), BVULT(sym_var, upper)
+                    regions.append(
+                        Region(
+                            curr + loop_regions[0], {stmt.iter: Equals(sym_var, lower)}
+                        )
                     )
 
-                    # internal regions:
+                    # TODO internal regions:
                     for i in range(1, len(loop_regions) - 1):
                         regions.append(loop_regions[i])
                         self.domains[str(stmt.iter) + "_internal_" + str(i)] = And(
@@ -222,22 +239,25 @@ class DataRaceDetection:
                         )
 
                     # loop re-entry = last barrier until loop exit + loop body until first barrier
-                    cross_iter = loop_regions[-1] + loop_regions[0]
-                    regions.append((loop_regions[-1], loop_regions[0], sym_var))
-                    sym_var_nxt = self.get_or_create_sym_var(str(stmt.iter) + "_nxt")
-                    self.domains[str(stmt.iter) + "_loop"] = And(
-                        Equals(sym_var_nxt, BVAdd(sym_var, BV(1, 32))),
-                        And(BVUGE(sym_var, lower), BVULT(sym_var, upper)),
+                    # TODO off by one in crossover domain
+                    crossover_domain = And(BVUGE(sym_var, lower), BVULT(sym_var, upper))
+                    regions.append(
+                        LoopCrossOverRegion(
+                            loop_regions[-1],
+                            loop_regions[0],
+                            stmt.iter,
+                            crossover_domain,
+                        )
                     )
 
                     # exit = last barrier until loop exit
                     curr = loop_regions[-1]
-                    self.domains[str(stmt.iter) + "_post"] = And(
-                        BVUGE(sym_var, lower), BVULT(sym_var, upper)
-                    )
+                    curr_dom_restrict = {
+                        stmt.iter: Equals(sym_var, BVSub(upper, BV(1, 32)))
+                    }
             else:
                 curr.append(stmt)
-        regions.append(curr)
+        regions.append(Region(curr, curr_dom_restrict))
 
         return regions
 
@@ -246,6 +266,9 @@ class DataRaceDetection:
             if isinstance(stmt, LoopIR.Barrier):
                 assert False
             if isinstance(stmt, LoopIR.Fork):
+                # don't track reads/writes prior to entrance
+                self.prog_var_to_writes.clear()
+                self.prog_var_to_reads.clear()
                 if isinstance(stmt.thread_count, LoopIR.Const):
                     thread_count = stmt.thread_count.val
                 else:
@@ -270,15 +293,33 @@ class DataRaceDetection:
                     ]
 
                     self.thread_locals = ChainMap()
-                    if isinstance(region, tuple):
-                        # loop crossover region
-                        self.proc_stmts(region[1])
-                        self.rename(region[2])
-                        self.proc_stmts(region[0])
-                    else:
-                        self.proc_stmts(region)
+                    if isinstance(region, LoopCrossOverRegion):
+                        sym = Symbol("loop_cross", BV32)
+                        old_loop_iter_sym = self.prog_var_to_sym[region.loop_iter]
+                        self.prog_var_to_sym[region.loop_iter] = sym
+                        self.domains[region.loop_iter] = And(
+                            Equals(BVAdd(old_loop_iter_sym, BV(1, 32)), sym),
+                            region.domain,
+                        )
+                        self.proc_stmts(region.i1_stmts)
+                        del self.domains[region.loop_iter]
+                        self.domains[region.loop_iter] = region.domain
+                        self.prog_var_to_sym[region.loop_iter] = old_loop_iter_sym
+                        self.proc_stmts(region.i_stmts)
+                        self.verify(
+                            tid, thread_domains, fixed_vars + [sym, old_loop_iter_sym]
+                        )
 
-                    self.verify(tid, thread_domains, fixed_vars)
+                        # loop crossover region
+                        # self.proc_stmts(region[1])
+                        # self.rename(region[2])
+                        # self.proc_stmts(region[0])
+                    else:
+                        self.domains = self.domains | region.domain_restrictions
+                        self.proc_stmts(region.stmts)
+                        for k in region.domain_restrictions:
+                            del self.domains[k]
+                        self.verify(tid, thread_domains, fixed_vars)
 
                     # clear reads and writes
                     self.prog_var_to_writes.clear()
