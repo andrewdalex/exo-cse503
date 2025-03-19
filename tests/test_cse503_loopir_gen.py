@@ -422,6 +422,19 @@ def test_drb120_no():
     assert not detector.has_data_race()
 
 
+def test_triple_nested():
+    @proc
+    def foo(var: i8[40000]):
+        for tid in fork(2):
+            for i in seq(0, 10):
+                for j in seq(0, 10):
+                    for k in seq(0, 10):
+                        var[i + j + k + tid * 100] = 7
+
+    detector = DataRaceDetection(foo.INTERNAL_proc())
+    assert not detector.has_data_race()
+
+
 # def test_barrier_loop():
 #     @proc
 #     def foo(a: i8[10]):
