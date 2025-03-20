@@ -184,10 +184,6 @@ class DataRaceDetection:
                 regions.append(curr)
                 curr = []
             elif isinstance(stmt, LoopIR.For):
-                subregions = self.loop_regions(stmt.body)
-                if len(subregions) > 1:
-                    # no barriers in nested loops
-                    assert False
                 curr.append(stmt)
             elif isinstance(stmt, LoopIR.Fork):
                 # no nested forks
