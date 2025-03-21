@@ -435,6 +435,34 @@ def test_triple_nested():
     assert not detector.has_data_race()
 
 
+def test_loop_internal_barrier():
+    @proc
+    def foo(a: i32[100]):
+        for tid in fork(2):
+            for i in seq(0, 10):
+                a[50 + i + tid] = 0
+                Barrier()
+                a[i + tid] = 0
+                Barrier()
+
+    detector = DataRaceDetection(foo.INTERNAL_proc())
+    assert not detector.has_data_race()
+
+
+def test_loop_internal_race():
+    @proc
+    def foo(a: i32[100]):
+        for tid in fork(2):
+            for i in seq(0, 10):
+                a[50 + i + tid] = 0
+                Barrier()
+                a[i] = 0
+                Barrier()
+
+    detector = DataRaceDetection(foo.INTERNAL_proc())
+    assert detector.has_data_race()
+
+
 # def test_barrier_loop():
 #     @proc
 #     def foo(a: i8[10]):

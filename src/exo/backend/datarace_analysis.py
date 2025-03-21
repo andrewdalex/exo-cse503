@@ -20,6 +20,12 @@ class LoopCrossOverRegion:
         self.domain = domain
 
 
+class LoopInternalRegion:
+    def __init__(self, stmts, fixed_var_domain):
+        self.stmts = stmts
+        self.fixed_var_domain = fixed_var_domain
+
+
 class DataRaceException(Exception):
     def __init__(self, message="", model=None):
         self.message = message
@@ -195,7 +201,7 @@ class DataRaceDetection:
         return regions
 
     def fork_regions(self, fork_body):
-        regions: list[Region | LoopCrossOverRegion] = []
+        regions: list[Region | LoopCrossOverRegion | LoopInternalRegion] = []
         curr = []
         curr_dom_restrict = {}
         for stmt in fork_body:
@@ -227,9 +233,12 @@ class DataRaceDetection:
                         )
                     )
 
-                    # TODO internal regions:
-                    if (len(loop_regions) - 1) >= 2:
-                        assert False, "Internal regions not supported"
+                    domain = {
+                        stmt.iter: And(BVUGE(sym_var, lower), BVULT(sym_var, upper))
+                    }
+                    for i in range(1, len(loop_regions) - 1):
+                        regions.append(LoopInternalRegion(loop_regions[i], domain))
+
                     # for i in range(1, len(loop_regions) - 1):
                     #     regions.append(loop_regions[i])
                     #     self.domains[str(stmt.iter) + "_internal_" + str(i)] = And(
@@ -308,10 +317,16 @@ class DataRaceDetection:
                             tid, thread_domains, fixed_vars + [sym, old_loop_iter_sym]
                         )
 
-                        # loop crossover region
-                        # self.proc_stmts(region[1])
-                        # self.rename(region[2])
-                        # self.proc_stmts(region[0])
+                    elif isinstance(region, LoopInternalRegion):
+                        self.domains = self.domains | region.fixed_var_domain
+                        self.proc_stmts(region.stmts)
+                        for k in region.fixed_var_domain:
+                            del self.domains[k]
+                        sym_fixed = [
+                            self.prog_var_to_sym[k]
+                            for k in region.fixed_var_domain.keys()
+                        ]
+                        self.verify(tid, thread_domains, fixed_vars + sym_fixed)
                     else:
                         self.domains = self.domains | region.domain_restrictions
                         self.proc_stmts(region.stmts)
